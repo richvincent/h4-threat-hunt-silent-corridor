@@ -5,7 +5,7 @@
 **Analyst:** Rich Vincent (`d3tr0it_z3r0`)
 **Date Completed:** 2026-05-09
 **Data Source:** `SilentCorridorX_CL` (MDE-style telemetry + FortiGate VPN logs, 8,538 rows)
-**Sentinel Workspace:** `LAW-SilentCorridor` — `94b3fda2-abe5-4af9-849a-a8b90d5c17ae` (subscription `cd015a7d-…`, RG `Cyber-Range-2-Admin-SOC`)
+**Sentinel Workspace:** `LAW-SilentCorridor`
 **Investigation Window:** 20 February — 5 March 2026
 **Reporting Customer:** K. Hofmann (CISO, Haldric Aerospace) per BfV advisory on GREY VEIL
 
@@ -13,7 +13,7 @@
 
 ## Executive Summary
 
-A state-sponsored threat actor designated **GREY VEIL** compromised the engineering segment of Haldric Aerospace via the corporate FortiGate SSL-VPN, achieving full domain compromise and exfiltration of classified avionics design material in a 13-day campaign. Initial access was obtained through credential brute-force from Tor exit node `185.220.101.34` against the engineering VPN account `s.brandt`. After landing on workstation `WS-ENG04`, the attacker performed extensive AD enumeration, attempted (and failed) an LSASS memory dump via the `comsvcs.dll/MiniDump` LOLBin technique, then successfully extracted the workstation's `SAM` hive — yielding the credential `m.richter:Haldric2025SecIT` for a privileged engineering admin account.
+A state-sponsored threat actor designated **GREY VEIL** compromised the engineering segment of Haldric Aerospace via the corporate FortiGate SSL-VPN, achieving full domain compromise and exfiltration of classified avionics design material in a 13-day campaign. Initial access was obtained through credential brute-force from Tor exit node `185.220.101.34` against the engineering VPN account `s.brandt`. After landing on workstation `WS-ENG04`, the attacker performed extensive AD enumeration, attempted (and failed) an LSASS memory dump via the `comsvcs.dll/MiniDump` LOLBin technique, then successfully extracted the workstation's `SAM` hive — yielding a privileged engineering administrator credential whose value is redacted from this public report.
 
 Using the stolen `m.richter` credential, GREY VEIL pivoted via WMI (`wmic /node:`) to both `SRV-DC01` (Domain Controller) and `SRV-FILES02` (engineering file server). On the DC they executed `ntdsutil "ac i ntds" ifm` to extract the entire `ntds.dit` Active Directory database from a VSS shadow copy, dropping the dump in a deceptively-named directory `C:\Windows\Temp\McAfee_Logs`. On the file server they collected the `C:\Engineering\Avionics\A400M_NavSys` directory tree (NATO A400M military transport navigation system design documents), packaged it via `Compress-Archive` into `win_update_kb5034.zip` masquerading as a Windows update, base64-encoded the archive with `certutil -encode`, and POSTed the result from `WS-ENG04` to attacker-controlled CDN `cdn-telemetry.cloud-endpoint.net`.
 
@@ -116,7 +116,7 @@ The first two DNS queries for `SRV-DC01` actually predate the breach (Feb 18-19,
 | 2026-02-27 12:20:20 | `reg save HKLM\SAM C:\Windows\Temp\sam.bak` | **SUCCESS** — local SAM hive saved to disk |
 | 2026-02-27 14:28:52 | `reg save HKLM\SAM C:\Windows\Temp\sam.bak` (again, overwrote first copy) | — |
 
-**Evidence gap:** The actual mechanism by which `m.richter:Haldric2025SecIT` was extracted is not directly visible. The most likely path is offline cracking of the SAM hive (`sam.bak`) — `m.richter` had cached interactive logon credentials on `WS-ENG04` (engineering admin who occasionally remoted in), and the attacker pulled the hash from SAM/SECURITY then cracked offline between Feb 27 and Feb 28.
+**Evidence gap:** The actual mechanism by which the `m.richter` credential was extracted is not directly visible. The most likely path is offline cracking of the SAM hive (`sam.bak`) — `m.richter` had cached interactive logon credentials on `WS-ENG04` (engineering admin who occasionally remoted in), and the attacker pulled the hash from SAM/SECURITY then cracked it offline between Feb 27 and Feb 28.
 
 ### Phase 4 — First Lateral Pivot to Domain Controller (WS-ENG04 → SRV-DC01)
 
@@ -124,9 +124,9 @@ The first two DNS queries for `SRV-DC01` actually predate the breach (Feb 18-19,
 
 | Time | Command | Notes |
 |---|---|---|
-| 2026-02-28 03:15:00 | `net use \\SRV-DC01\C$ /user:m.richter Haldric2025SecIT` | First lateral pivot. Credentials supplied **in plaintext on the command line** (visible in `ProcessCommandLine`). |
+| 2026-02-28 03:15:00 | `net use \\SRV-DC01\C$ /user:m.richter <redacted>` | First lateral pivot. Credentials supplied **in plaintext on the command line** (visible in `ProcessCommandLine`). |
 | 2026-02-28 03:15:00 | DeviceLogonEvent on SRV-DC01: `LogonType=3` (Network), `RemoteIP=10.1.70.42` (SRV-FILES02's IP) | Note: pivot RemoteIP attributes through SRV-FILES02 — attacker had transient access there earlier (Feb 25 07:27) and used it as an intermediate hop. |
-| 2026-02-28 03:16:53 | `wmic /node:"SRV-DC01" /user:"m.richter" /password:"Haldric2025SecIT" process call create "cmd.exe /c mkdir C:\Windows\Temp\McAfee_Logs & ntdsutil \"ac i ntds\" ifm \"create full C:\Windows\Temp\McAfee_Logs\""` | **DC compromise via WMI.** Single line creates staging dir AND launches `ntdsutil` IFM. |
+| 2026-02-28 03:16:53 | `wmic /node:"SRV-DC01" /user:"m.richter" /password:"<redacted>" process call create "cmd.exe /c mkdir C:\Windows\Temp\McAfee_Logs & ntdsutil \"ac i ntds\" ifm \"create full C:\Windows\Temp\McAfee_Logs\""` | **DC compromise via WMI.** Single line creates staging dir AND launches `ntdsutil` IFM. |
 
 ### Phase 5 — Domain Database Extraction (SRV-DC01)
 
@@ -243,7 +243,7 @@ The attacker waited ~2 days after staging on SRV-FILES02 before transmitting (li
 | Account | Source | Privilege | Notes |
 |---|---|---|---|
 | `s.brandt` | VPN brute-force from Tor | Engineering user (VPN access) | Initial access; password not exposed in plaintext but the account was used freely after Feb 20 02:14 |
-| `m.richter` / `Haldric2025SecIT` | Likely from offline crack of `sam.bak` | Engineering admin (local administrator on WS-ENG04, plus AD privileges sufficient for WMI to SRV-DC01 + SRV-FILES02) | **Plaintext exposed in `ProcessCommandLine` at 2026-02-28 03:15:00** (`net use \\SRV-DC01\C$ /user:m.richter Haldric2025SecIT`) — once captured by EDR/Sysmon, credential was visible to defenders too. |
+| `m.richter` / `<redacted>` | Likely from offline crack of `sam.bak` | Engineering admin (local administrator on WS-ENG04, plus AD privileges sufficient for WMI to SRV-DC01 + SRV-FILES02) | **Plaintext exposed in `ProcessCommandLine` at 2026-02-28 03:15:00** (`net use \\SRV-DC01\C$ /user:m.richter <redacted>`) — once captured by EDR/Sysmon, credential was visible to defenders too. |
 | All AD accounts (via ntds.dit) | `ntdsutil ifm` extraction Feb 28 04:21 | Forest-wide | Every domain account hash is now offline-crackable. Assume full domain compromise. |
 | LSA cached secrets (via SECURITY hive) | Same extraction | Service accounts, cached domain admin sessions on the DC | Credentials with broad AD privileges are likely included. |
 
